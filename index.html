@@ -1,0 +1,1597 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GLORIX AI — Live GPS & Telemetry Tracker</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+                    },
+                    colors: {
+                        slate: {
+                            850: '#151e2e',
+                            900: '#0f172a',
+                            950: '#090d16',
+                        }
+                    }
+                }
+            }
+        };
+    </script>
+
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Leaflet CSS & JS (100% Free, Zero API Keys) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Optional Firebase SDKs for Cloud Room Sync (Gracefully Falls Back to BroadcastChannel/localStorage) -->
+    <script type="module">
+        try {
+            const appMod = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
+            const authMod = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
+            const fsMod = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+
+            window.FirebaseGeoBridge = {
+                initializeApp: appMod.initializeApp,
+                getAuth: authMod.getAuth,
+                signInAnonymously: authMod.signInAnonymously,
+                signInWithCustomToken: authMod.signInWithCustomToken,
+                getFirestore: fsMod.getFirestore,
+                doc: fsMod.doc,
+                setDoc: fsMod.setDoc,
+                deleteDoc: fsMod.deleteDoc,
+                onSnapshot: fsMod.onSnapshot,
+                collection: fsMod.collection,
+                ready: true
+            };
+            window.dispatchEvent(new Event('firebase-bridge-ready'));
+        } catch (e) {
+            window.FirebaseGeoBridge = { ready: false };
+            window.dispatchEvent(new Event('firebase-bridge-ready'));
+        }
+    </script>
+
+    <style>
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(148, 163, 184, 0.3);
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(148, 163, 184, 0.5);
+        }
+
+        .leaflet-control-attribution {
+            font-size: 10px !important;
+            background: rgba(15, 23, 42, 0.78) !important;
+            color: #94a3b8 !important;
+            backdrop-filter: blur(4px);
+            border-top-left-radius: 6px;
+        }
+        .leaflet-control-attribution a {
+            color: #38bdf8 !important;
+        }
+        html:not(.dark) .leaflet-control-attribution {
+            background: rgba(255, 255, 255, 0.88) !important;
+            color: #475569 !important;
+        }
+        html:not(.dark) .leaflet-control-attribution a {
+            color: #0284c7 !important;
+        }
+
+        /* Pulsing Self User Marker */
+        .user-location-marker {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .user-pulse-ring {
+            position: absolute;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background-color: rgba(14, 165, 233, 0.35);
+            animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        .user-core-dot {
+            position: relative;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background-color: #0ea5e9;
+            border: 3px solid #ffffff;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+            z-index: 2;
+        }
+        .user-heading-arrow {
+            position: absolute;
+            top: -10px;
+            width: 0;
+            height: 0;
+            border-left: 6px solid transparent;
+            border-right: 6px solid transparent;
+            border-bottom: 10px solid #0ea5e9;
+            transform-origin: 6px 19px;
+            z-index: 1;
+            transition: transform 0.2s ease-out;
+        }
+
+        @keyframes pulse-ring {
+            0% {
+                transform: scale(0.45);
+                opacity: 0.9;
+            }
+            80%, 100% {
+                transform: scale(1.65);
+                opacity: 0;
+            }
+        }
+
+        /* Custom Waypoint Marker */
+        .waypoint-pin {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            background: #f59e0b;
+            border: 2.5px solid #ffffff;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+        }
+        .waypoint-pin svg {
+            transform: rotate(45deg);
+            color: #ffffff;
+        }
+
+        /* Group Member Marker */
+        .peer-marker-wrapper {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .peer-name-badge {
+            position: absolute;
+            top: -26px;
+            white-space: nowrap;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #ffffff;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+            border: 1.5px solid rgba(255, 255, 255, 0.85);
+            pointer-events: none;
+        }
+        .peer-pulse-ring {
+            position: absolute;
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            opacity: 0.42;
+            animation: pulse-ring 2.2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+        .peer-core-dot {
+            position: relative;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 2.5px solid #ffffff;
+            color: #ffffff;
+            font-size: 11px;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+            z-index: 2;
+        }
+        .peer-stopped-pill {
+            position: absolute;
+            bottom: -18px;
+            white-space: nowrap;
+            padding: 1px 6px;
+            border-radius: 9999px;
+            font-size: 9px;
+            font-weight: 800;
+            font-family: 'JetBrains Mono', monospace;
+            background-color: #f59e0b;
+            color: #0f172a;
+            border: 1px solid #ffffff;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+            background-color: #0f172a;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased overflow-hidden select-none">
+
+    <!-- ==================== PERMISSION & PRIVACY CONSENT MODAL ==================== -->
+    <div id="permissionModal" class="fixed inset-0 z-[2000] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 transition-opacity duration-300">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div class="w-12 h-12 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-500 mb-4">
+                <i data-lucide="navigation" class="w-6 h-6"></i>
+            </div>
+            <h2 class="text-xl font-bold tracking-tight mb-2">GLORIX AI — Location Access</h2>
+            <p class="text-sm text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
+                <strong>GLORIX AI</strong> uses your device's GPS sensor via browser Geolocation API to plot your live position on OpenStreetMap, compute telemetry, track stationary duration, and optionally share with room members you approve.
+            </p>
+            <div class="bg-slate-100 dark:bg-slate-850 rounded-xl p-3.5 mb-6 space-y-2 text-xs text-slate-600 dark:text-slate-300 border border-slate-200/60 dark:border-slate-800">
+                <div class="flex items-start gap-2.5">
+                    <i data-lucide="shield-check" class="w-4 h-4 text-emerald-500 shrink-0 mt-0.5"></i>
+                    <span><strong>Keyless OpenStreetMap & Fallbacks:</strong> Uses free map tiles with zero API keys and automatic fallback if a tile server fails.</span>
+                </div>
+                <div class="flex items-start gap-2.5">
+                    <i data-lucide="sliders" class="w-4 h-4 text-sky-500 shrink-0 mt-0.5"></i>
+                    <span><strong>Explicit Group Consent:</strong> Group sharing is OFF by default and only broadcasts when you toggle it ON.</span>
+                </div>
+            </div>
+            <div class="flex flex-col sm:flex-row gap-3">
+                <button id="btnGrantLocation" type="button" class="flex-1 bg-sky-500 hover:bg-sky-600 active:bg-sky-700 text-white font-semibold py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-sky-500/25 cursor-pointer">
+                    <i data-lucide="locate-fixed" class="w-4 h-4"></i>
+                    <span>Allow & Start GPS</span>
+                </button>
+                <button id="btnStartDemoFromModal" type="button" class="flex-1 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-medium py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
+                    <i data-lucide="play-circle" class="w-4 h-4 text-amber-500"></i>
+                    <span>Try Demo Mode</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== WAYPOINT / GEOFENCE CREATION MODAL ==================== -->
+    <div id="waypointModal" class="fixed inset-0 z-[1900] bg-slate-950/70 backdrop-blur-sm hidden items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500">
+                        <i data-lucide="map-pin" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-base">Drop Waypoint & Geofence</h3>
+                        <p id="wpModalCoords" class="text-xs font-mono text-slate-500 dark:text-slate-400">0.00000, 0.00000</p>
+                    </div>
+                </div>
+                <button id="btnCloseWpModal" type="button" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <form id="waypointForm" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Waypoint Name</label>
+                    <input type="text" id="wpName" required placeholder="e.g., Base Camp, Checkpoint Alpha" class="w-full px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-850 border border-slate-200 dark:border-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">Notes (Optional)</label>
+                    <textarea id="wpNotes" rows="2" placeholder="Add details about this location..." class="w-full px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-850 border border-slate-200 dark:border-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"></textarea>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-1.5">
+                        <label class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Geofence Alert Radius</label>
+                        <span id="wpRadiusLabel" class="text-xs font-mono font-bold text-amber-500">100 m</span>
+                    </div>
+                    <input type="range" id="wpRadius" min="0" max="2000" step="25" value="100" class="w-full accent-amber-500 cursor-pointer">
+                    <div class="flex justify-between text-[10px] text-slate-400 mt-1">
+                        <span>0m (Off)</span>
+                        <span>500m</span>
+                        <span>1km</span>
+                        <span>2km</span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 pt-2">
+                    <button type="button" id="btnCancelWp" class="flex-1 py-2.5 px-4 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-sm font-medium transition cursor-pointer">Cancel</button>
+                    <button type="submit" class="flex-1 py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold transition shadow-lg shadow-amber-500/20 cursor-pointer">Save Waypoint</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== CONFIRMATION DIALOG MODAL ==================== -->
+    <div id="confirmModal" class="fixed inset-0 z-[2100] bg-slate-950/75 backdrop-blur-sm hidden items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl">
+            <div class="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-500 mb-3">
+                <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+            </div>
+            <h3 id="confirmTitle" class="text-lg font-bold mb-1.5">Confirm Action</h3>
+            <p id="confirmMessage" class="text-sm text-slate-600 dark:text-slate-400 mb-5">Are you sure you want to proceed?</p>
+            <div class="flex gap-3">
+                <button id="btnConfirmCancel" type="button" class="flex-1 py-2 px-4 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-sm font-medium transition cursor-pointer">Cancel</button>
+                <button id="btnConfirmAccept" type="button" class="flex-1 py-2 px-4 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-sm font-semibold transition shadow-lg shadow-rose-500/20 cursor-pointer">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== TOAST CONTAINER ==================== -->
+    <div id="toastContainer" class="fixed top-16 left-1/2 -translate-x-1/2 z-[1800] flex flex-col items-center gap-2 pointer-events-none w-full max-w-md px-4"></div>
+
+    <!-- ==================== MAIN APPLICATION SHELL ==================== -->
+    <div class="relative w-screen h-screen flex flex-col md:flex-row overflow-hidden">
+
+        <!-- TOP FLOATING HEADER (LEFT SIDE ON MAP) -->
+        <header class="absolute top-3 left-3 right-3 md:left-[416px] z-[1000] pointer-events-none flex items-center justify-between gap-2">
+            <!-- Left Map Brand + Status Pill -->
+            <div class="pointer-events-auto flex items-center gap-2.5 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 px-3.5 py-2 rounded-2xl shadow-lg">
+                <!-- App Name Badge on Map Left Side -->
+                <div class="flex items-center gap-2 pr-1">
+                    <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 via-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-sm">
+                        <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                    </div>
+                    <div class="flex flex-col">
+                        <span class="text-xs font-extrabold tracking-wider bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent leading-none">GLORIX AI</span>
+                        <span class="text-[9px] font-mono text-slate-400 mt-0.5">LIVE MAP</span>
+                    </div>
+                </div>
+
+                <div class="h-6 w-px bg-slate-200 dark:bg-slate-800"></div>
+
+                <!-- Live GPS Status -->
+                <div class="flex items-center gap-2">
+                    <span id="statusIndicatorDot" class="w-2.5 h-2.5 rounded-full bg-slate-400 shrink-0"></span>
+                    <div class="flex flex-col">
+                        <span id="statusText" class="text-xs font-bold tracking-tight leading-none">GPS Idle</span>
+                        <span id="accuracyBadge" class="text-[10px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">Accuracy: -- m</span>
+                    </div>
+                </div>
+
+                <div class="h-5 w-px bg-slate-200 dark:bg-slate-800 mx-0.5"></div>
+
+                <button id="btnToggleDemo" type="button" title="Toggle Simulated Movement Route" class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold transition bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-amber-500/15 hover:text-amber-500 cursor-pointer">
+                    <i data-lucide="cpu" class="w-3.5 h-3.5"></i>
+                    <span class="hidden sm:inline">Demo</span>
+                </button>
+            </div>
+
+            <div class="pointer-events-auto flex items-center gap-2">
+                <!-- Keyless Map Layer Switcher -->
+                <div class="relative">
+                    <button id="btnLayerMenu" type="button" title="Switch Map Layer" class="p-2.5 rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 shadow-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer">
+                        <i data-lucide="layers" class="w-5 h-5 text-slate-700 dark:text-slate-200"></i>
+                    </button>
+                    <div id="layerDropdown" class="hidden absolute right-0 mt-2 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-1.5 z-[1100]">
+                        <button type="button" data-layer="street" class="layer-option w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-left hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer">
+                            <i data-lucide="map" class="w-4 h-4 text-emerald-500"></i> OpenStreetMap (Default)
+                        </button>
+                        <button type="button" data-layer="dark" class="layer-option w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-left hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer">
+                            <i data-lucide="moon" class="w-4 h-4 text-sky-400"></i> CartoDB Dark Matter
+                        </button>
+                        <button type="button" data-layer="satellite" class="layer-option w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-left hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer">
+                            <i data-lucide="globe" class="w-4 h-4 text-amber-500"></i> Esri World Imagery
+                        </button>
+                        <button type="button" data-layer="terrain" class="layer-option w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium text-left hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer">
+                            <i data-lucide="mountain" class="w-4 h-4 text-purple-500"></i> OpenTopoMap
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Auto-Follow / Recenter Button -->
+                <button id="btnRecenter" type="button" title="Recenter & Auto-Follow" class="p-2.5 rounded-2xl bg-sky-500 text-white shadow-lg shadow-sky-500/25 hover:bg-sky-600 transition cursor-pointer">
+                    <i data-lucide="crosshair" class="w-5 h-5"></i>
+                </button>
+
+                <!-- Theme Toggle Button -->
+                <button id="btnThemeToggle" type="button" title="Toggle Light/Dark UI Theme" class="p-2.5 rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 shadow-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer">
+                    <i data-lucide="sun" class="w-5 h-5 hidden dark:block text-amber-400"></i>
+                    <i data-lucide="moon" class="w-5 h-5 block dark:hidden text-slate-700"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- MAP CANVAS -->
+        <main class="relative flex-1 w-full h-full z-0">
+            <div id="map" class="w-full h-full"></div>
+
+            <div id="pinDropBanner" class="hidden absolute bottom-[48vh] md:bottom-6 left-1/2 md:left-[calc(50%+200px)] -translate-x-1/2 z-[1000] bg-amber-500 text-white px-4 py-2 rounded-full shadow-xl flex items-center gap-2.5 text-xs font-semibold">
+                <i data-lucide="map-pin" class="w-4 h-4"></i>
+                <span>Tap anywhere on the map to place a Waypoint</span>
+                <button id="btnCancelPinDrop" type="button" class="ml-1 bg-amber-600 hover:bg-amber-700 px-2 py-0.5 rounded-full text-[11px] cursor-pointer">Cancel</button>
+            </div>
+        </main>
+
+        <!-- TELEMETRY SIDEBAR / BOTTOM DRAWER -->
+        <aside id="dashboardDrawer" class="fixed md:static bottom-0 left-0 right-0 md:w-[400px] md:h-full h-[46vh] bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-t md:border-t-0 md:border-r border-slate-200 dark:border-slate-800 z-[1050] flex flex-col shadow-2xl transition-all duration-300 rounded-t-3xl md:rounded-none">
+            <div id="drawerHandle" class="md:hidden w-full flex flex-col items-center pt-2.5 pb-1 cursor-pointer">
+                <div class="w-10 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700"></div>
+            </div>
+
+            <!-- Header & Session Controls -->
+            <div class="px-5 pt-2 md:pt-5 pb-4 border-b border-slate-200/80 dark:border-slate-800/80">
+                <div class="flex items-center justify-between mb-3.5">
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-sky-500 via-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-md shadow-sky-500/20">
+                            <i data-lucide="radar" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <h1 class="font-extrabold text-base tracking-tight leading-none">GLORIX AI</h1>
+                            <span class="text-[11px] text-slate-500 dark:text-slate-400">Live GPS & Group Tracker</span>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-1.5">
+                        <button id="btnDropWpHere" type="button" title="Drop Waypoint at Current Position" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-xs font-semibold transition cursor-pointer">
+                            <i data-lucide="pin" class="w-3.5 h-3.5"></i>
+                            <span>Pin Here</span>
+                        </button>
+                        <button id="btnDropWpMap" type="button" title="Tap Map to Place Waypoint" class="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 transition cursor-pointer">
+                            <i data-lucide="map-pin-plus" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-3 gap-2">
+                    <button id="btnStartTrack" type="button" class="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white text-xs font-semibold shadow-md shadow-emerald-500/20 transition cursor-pointer">
+                        <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+                        <span id="btnStartLabel">Start</span>
+                    </button>
+                    <button id="btnPauseTrack" type="button" disabled class="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:pointer-events-none text-white text-xs font-semibold shadow-md shadow-amber-500/20 transition cursor-pointer">
+                        <i data-lucide="pause" class="w-3.5 h-3.5 fill-current"></i>
+                        <span>Pause</span>
+                    </button>
+                    <button id="btnStopClear" type="button" class="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-500 border border-rose-500/20 text-xs font-semibold transition cursor-pointer">
+                        <i data-lucide="square" class="w-3.5 h-3.5"></i>
+                        <span>Stop & Clear</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="flex border-b border-slate-200/80 dark:border-slate-800/80 px-4 gap-3 text-xs font-semibold overflow-x-auto">
+                <button type="button" data-tab="telemetry" class="tab-btn py-2.5 border-b-2 border-sky-500 text-sky-500 flex items-center gap-1.5 shrink-0 cursor-pointer">
+                    <i data-lucide="activity" class="w-3.5 h-3.5"></i> Telemetry
+                </button>
+                <button type="button" data-tab="group" class="tab-btn py-2.5 border-b-2 border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 flex items-center gap-1.5 shrink-0 cursor-pointer">
+                    <i data-lucide="users" class="w-3.5 h-3.5"></i> Group <span id="groupCountBadge" class="px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-500 text-[10px]">0</span>
+                </button>
+                <button type="button" data-tab="waypoints" class="tab-btn py-2.5 border-b-2 border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 flex items-center gap-1.5 shrink-0 cursor-pointer">
+                    <i data-lucide="map-pin" class="w-3.5 h-3.5"></i> Waypoints <span id="wpCountBadge" class="px-1.5 py-0.2 rounded-full bg-slate-200 dark:bg-slate-800 text-[10px]">0</span>
+                </button>
+                <button type="button" data-tab="history" class="tab-btn py-2.5 border-b-2 border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 flex items-center gap-1.5 shrink-0 cursor-pointer">
+                    <i data-lucide="history" class="w-3.5 h-3.5"></i> Sessions <span id="sessionCountBadge" class="px-1.5 py-0.2 rounded-full bg-slate-200 dark:bg-slate-800 text-[10px]">0</span>
+                </button>
+            </div>
+
+            <!-- Scrollable Tab Panels -->
+            <div class="flex-1 overflow-y-auto p-5 space-y-4">
+
+                <!-- TAB 1: TELEMETRY -->
+                <div id="tab-telemetry" class="tab-content space-y-4">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-3.5">
+                            <div class="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+                                <span class="text-[11px] font-semibold uppercase tracking-wider">Speed</span>
+                                <i data-lucide="gauge" class="w-4 h-4 text-sky-500"></i>
+                            </div>
+                            <div class="flex items-baseline gap-1.5">
+                                <span id="valSpeedKmh" class="text-2xl font-bold font-mono tracking-tight">0.0</span>
+                                <span class="text-xs font-medium text-slate-500">km/h</span>
+                            </div>
+                            <div id="valSpeedMs" class="text-[11px] font-mono text-slate-400 mt-0.5">0.00 m/s</div>
+                        </div>
+
+                        <div class="bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-3.5">
+                            <div class="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+                                <span class="text-[11px] font-semibold uppercase tracking-wider">Distance</span>
+                                <i data-lucide="route" class="w-4 h-4 text-emerald-500"></i>
+                            </div>
+                            <div class="flex items-baseline gap-1.5">
+                                <span id="valDistance" class="text-2xl font-bold font-mono tracking-tight">0.00</span>
+                                <span id="valDistanceUnit" class="text-xs font-medium text-slate-500">km</span>
+                            </div>
+                            <div id="valPointsCount" class="text-[11px] font-mono text-slate-400 mt-0.5">0 trackpoints</div>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-3.5">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                                <i data-lucide="compass" class="w-3.5 h-3.5 text-indigo-500"></i> GPS Coordinates
+                            </span>
+                            <button id="btnCopyCoords" type="button" class="text-[11px] font-medium text-sky-500 hover:text-sky-400 flex items-center gap-1 cursor-pointer">
+                                <i data-lucide="copy" class="w-3 h-3"></i> Copy
+                            </button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 font-mono text-xs">
+                            <div class="bg-white dark:bg-slate-900/90 px-3 py-2 rounded-xl border border-slate-200/50 dark:border-slate-800">
+                                <span class="text-[10px] text-slate-400 block">LATITUDE</span>
+                                <span id="valLat" class="font-semibold">--.------°</span>
+                            </div>
+                            <div class="bg-white dark:bg-slate-900/90 px-3 py-2 rounded-xl border border-slate-200/50 dark:border-slate-800">
+                                <span class="text-[10px] text-slate-400 block">LONGITUDE</span>
+                                <span id="valLng" class="font-semibold">--.------°</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2.5 text-xs">
+                        <div class="bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-3">
+                            <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Altitude</span>
+                            <span id="valAlt" class="text-sm font-bold font-mono mt-0.5 block">-- m</span>
+                        </div>
+                        <div class="bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-3">
+                            <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Heading</span>
+                            <span id="valHeading" class="text-sm font-bold font-mono mt-0.5 block">--°</span>
+                        </div>
+                        <div class="bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-3">
+                            <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Duration</span>
+                            <span id="valDuration" class="text-sm font-bold font-mono mt-0.5 block">00:00:00</span>
+                        </div>
+                        <div class="bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-3">
+                            <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Stationary</span>
+                            <span id="valStationary" class="text-sm font-bold font-mono mt-0.5 block text-amber-500">00:00</span>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 px-1">
+                        <span>Last fix: <strong id="valLastUpdate" class="font-mono text-slate-700 dark:text-slate-200">--:--:--</strong></span>
+                        <span id="stationaryBadge" class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 font-semibold">Moving</span>
+                    </div>
+
+                    <!-- Export Row -->
+                    <div class="grid grid-cols-3 gap-2 pt-1">
+                        <button id="btnExportGPX" type="button" class="py-2 px-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer">
+                            <i data-lucide="download" class="w-3.5 h-3.5 text-sky-500"></i> GPX
+                        </button>
+                        <button id="btnExportCSV" type="button" class="py-2 px-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer">
+                            <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5 text-emerald-500"></i> CSV
+                        </button>
+                        <button id="btnExportGeoJSON" type="button" class="py-2 px-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer">
+                            <i data-lucide="braces" class="w-3.5 h-3.5 text-amber-500"></i> GeoJSON
+                        </button>
+                    </div>
+                </div>
+
+                <!-- TAB 2: GROUP ROOM -->
+                <div id="tab-group" class="tab-content hidden space-y-4">
+                    <div class="bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-4 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">Live Location Sharing</h3>
+                                <p id="syncBackendLabel" class="text-[11px] text-slate-500 dark:text-slate-400">BroadcastChannel + Local Storage Sync</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input id="toggleShareLocation" type="checkbox" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                            </label>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <div>
+                                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Your Display Name</label>
+                                <input id="inputPeerName" type="text" maxlength="20" placeholder="Rider / Member" class="w-full px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-sky-500">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Room Code</label>
+                                <div class="flex gap-1.5">
+                                    <input id="inputRoomCode" type="text" maxlength="16" class="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-mono uppercase focus:outline-none focus:ring-2 focus:ring-sky-500">
+                                    <button id="btnJoinRoom" type="button" class="px-2.5 py-1.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-xs font-semibold shrink-0 cursor-pointer">Join</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between pt-1">
+                            <button id="btnCopyRoomLink" type="button" class="text-[11px] font-semibold text-sky-500 hover:text-sky-400 flex items-center gap-1 cursor-pointer">
+                                <i data-lucide="link" class="w-3.5 h-3.5"></i> Copy Invite Link
+                            </button>
+                            <span id="roomStatusPill" class="text-[11px] font-mono text-slate-400">Sharing OFF</span>
+                        </div>
+                    </div>
+
+                    <div id="groupMembersList" class="space-y-2">
+                        <p class="text-xs text-slate-500 dark:text-slate-400 text-center py-6">
+                            Enable <strong>Live Location Sharing</strong> or open another tab with the same room code to see active group members.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- TAB 3: WAYPOINTS & GEOFENCES -->
+                <div id="tab-waypoints" class="tab-content hidden space-y-3">
+                    <div id="waypointsList" class="space-y-2.5">
+                        <p class="text-xs text-slate-500 dark:text-slate-400 text-center py-8">
+                            No waypoints yet. Use <strong>Pin Here</strong> or tap the <strong>Map Pin+</strong> button to drop a geofenced marker.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- TAB 4: SAVED SESSIONS -->
+                <div id="tab-history" class="tab-content hidden space-y-3">
+                    <div id="sessionsList" class="space-y-2.5">
+                        <p class="text-xs text-slate-500 dark:text-slate-400 text-center py-8">
+                            Completed tracking sessions will appear here automatically when you stop a track.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // ==================== STATE & CONSTANTS ====================
+        const STORAGE_KEYS = {
+            THEME: 'glorix_theme_v1',
+            WAYPOINTS: 'glorix_waypoints_v1',
+            SESSIONS: 'glorix_sessions_v1',
+            PEER_PROFILE: 'glorix_peer_profile_v1',
+            GROUP_PEERS: 'glorix_group_peers_v1'
+        };
+
+        const PEER_COLORS = ['#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4', '#f97316'];
+
+        const state = {
+            trackingStatus: 'idle',
+            demoMode: false,
+            demoTimer: null,
+            demoIndex: 0,
+            watchId: null,
+            durationTimer: null,
+            elapsedMs: 0,
+            stationaryMs: 0,
+            lastTickTime: null,
+            isStationary: false,
+            stationaryAnchor: null,
+            autoFollow: true,
+            pinDropMode: false,
+            pendingPinCoords: null,
+            currentPosition: null,
+            previousPosition: null,
+            totalDistanceMeters: 0,
+            trackPoints: [],
+            waypoints: [],
+            sessions: [],
+            group: {
+                sharing: false,
+                roomCode: new URLSearchParams(window.location.search).get('room') || 'GLORIX-01',
+                peerId: 'peer-' + Math.random().toString(36).slice(2, 8),
+                peerName: 'Rider-' + Math.floor(100 + Math.random() * 900),
+                peers: {}
+            },
+            confirmCallback: null
+        };
+
+        const DEMO_ROUTE = [
+            { lat: 21.1458, lng: 79.0882, speedMs: 8.5, heading: 45, alt: 312 },
+            { lat: 21.1476, lng: 79.0861, speedMs: 10.2, heading: 315, alt: 314 },
+            { lat: 21.1498, lng: 79.0835, speedMs: 11.4, heading: 300, alt: 316 },
+            { lat: 21.1512, lng: 79.0810, speedMs: 0.0, heading: 300, alt: 315 },
+            { lat: 21.1512, lng: 79.0810, speedMs: 0.0, heading: 300, alt: 315 },
+            { lat: 21.1490, lng: 79.0789, speedMs: 9.8, heading: 225, alt: 313 },
+            { lat: 21.1465, lng: 79.0815, speedMs: 10.6, heading: 135, alt: 311 },
+            { lat: 21.1458, lng: 79.0882, speedMs: 9.1, heading: 95, alt: 312 }
+        ];
+
+        // ==================== LEAFLET MAP INIT & KEYLESS LAYERS ====================
+        const map = L.map('map', {
+            center: [21.1458, 79.0882],
+            zoom: 15,
+            zoomControl: false
+        });
+
+        const tileLayers = {
+            street: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+            }),
+            dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap &copy; CARTO'
+            }),
+            satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom: 19,
+                attribution: '&copy; Esri'
+            }),
+            terrain: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+                maxZoom: 17,
+                attribution: '&copy; OpenStreetMap &copy; OpenTopoMap'
+            })
+        };
+
+        let activeTileKey = 'street';
+        let activeTileLayer = tileLayers.street.addTo(map);
+
+        activeTileLayer.on('tileerror', () => {
+            if (activeTileKey !== 'dark') {
+                switchMapLayer('dark', true);
+            }
+        });
+
+        function switchMapLayer(key, silent = false) {
+            if (!tileLayers[key]) return;
+            if (activeTileLayer) map.removeLayer(activeTileLayer);
+            activeTileKey = key;
+            activeTileLayer = tileLayers[key].addTo(map);
+            if (!silent) showToast(`Switched map layer to ${key.toUpperCase()}`, 'info');
+        }
+
+        const selfDivIcon = L.divIcon({
+            className: '',
+            html: `
+                <div class="user-location-marker">
+                    <div class="user-pulse-ring"></div>
+                    <div id="selfHeadingArrow" class="user-heading-arrow" style="transform: rotate(0deg);"></div>
+                    <div class="user-core-dot"></div>
+                </div>
+            `,
+            iconSize: [44, 44],
+            iconAnchor: [22, 22]
+        });
+
+        const selfMarker = L.marker([21.1458, 79.0882], { icon: selfDivIcon, zIndexOffset: 500 }).addTo(map);
+        const accuracyCircle = L.circle([21.1458, 79.0882], {
+            radius: 25,
+            color: '#0ea5e9',
+            weight: 1.5,
+            fillColor: '#0ea5e9',
+            fillOpacity: 0.12
+        }).addTo(map);
+
+        const trackPolyline = L.polyline([], {
+            color: '#0ea5e9',
+            weight: 4.5,
+            opacity: 0.9,
+            smoothFactor: 1
+        }).addTo(map);
+
+        const waypointLayerGroup = L.layerGroup().addTo(map);
+        const peerLayerGroup = L.layerGroup().addTo(map);
+
+        map.on('dragstart', () => {
+            state.autoFollow = false;
+            updateRecenterBtnStyle();
+        });
+
+        map.on('click', (e) => {
+            if (!state.pinDropMode) return;
+            state.pinDropMode = false;
+            document.getElementById('pinDropBanner').classList.add('hidden');
+            openWaypointModal(e.latlng.lat, e.latlng.lng);
+        });
+
+        // ==================== UTILITIES & MATH ====================
+        function haversineMeters(lat1, lon1, lat2, lon2) {
+            const R = 6371000;
+            const toRad = (deg) => (deg * Math.PI) / 180;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function formatDuration(ms) {
+            const totalSec = Math.max(0, Math.floor(ms / 1000));
+            const hrs = String(Math.floor(totalSec / 3600)).padStart(2, '0');
+            const mins = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
+            const secs = String(totalSec % 60).padStart(2, '0');
+            return `${hrs}:${mins}:${secs}`;
+        }
+
+        function formatShortDuration(ms) {
+            const totalSec = Math.max(0, Math.floor(ms / 1000));
+            const mins = String(Math.floor(totalSec / 60)).padStart(2, '0');
+            const secs = String(totalSec % 60).padStart(2, '0');
+            return `${mins}:${secs}`;
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            const styles = {
+                info: 'bg-slate-900 dark:bg-slate-800 text-white border-slate-700',
+                success: 'bg-emerald-600 text-white border-emerald-500',
+                warning: 'bg-amber-500 text-slate-950 border-amber-400',
+                error: 'bg-rose-600 text-white border-rose-500'
+            };
+            toast.className = `pointer-events-auto px-4 py-2.5 rounded-xl border text-xs font-semibold shadow-xl transition-all ${styles[type] || styles.info}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 250);
+            }, 3200);
+        }
+
+        function openConfirmModal(title, message, onAccept) {
+            document.getElementById('confirmTitle').textContent = title;
+            document.getElementById('confirmMessage').textContent = message;
+            state.confirmCallback = onAccept;
+            const modal = document.getElementById('confirmModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeConfirmModal() {
+            state.confirmCallback = null;
+            const modal = document.getElementById('confirmModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // ==================== TELEMETRY & POSITION ENGINE ====================
+        function handleNewPosition(posData, isDemo = false) {
+            const now = Date.now();
+            const lat = Number(posData.lat);
+            const lng = Number(posData.lng);
+            const accuracy = Number.isFinite(posData.accuracy) ? posData.accuracy : 12;
+            const altitude = Number.isFinite(posData.altitude) ? posData.altitude : null;
+            const heading = Number.isFinite(posData.heading) ? posData.heading : null;
+            let speedMs = Number.isFinite(posData.speedMs) && posData.speedMs >= 0 ? posData.speedMs : 0;
+
+            if (state.previousPosition && !isDemo) {
+                const dist = haversineMeters(state.previousPosition.lat, state.previousPosition.lng, lat, lng);
+                const dtSec = Math.max(0.2, (now - state.previousPosition.timestamp) / 1000);
+                if (!Number.isFinite(posData.speedMs)) {
+                    speedMs = dist / dtSec;
+                }
+            }
+
+            if (speedMs < 0.45) speedMs = 0;
+
+            const current = { lat, lng, accuracy, altitude, heading, speedMs, timestamp: now };
+            state.currentPosition = current;
+
+            selfMarker.setLatLng([lat, lng]);
+            accuracyCircle.setLatLng([lat, lng]).setRadius(Math.min(Math.max(accuracy, 8), 250));
+
+            const arrowEl = document.getElementById('selfHeadingArrow');
+            if (arrowEl && heading !== null) {
+                arrowEl.style.transform = `rotate(${heading}deg)`;
+            }
+
+            if (state.autoFollow) {
+                map.panTo([lat, lng], { animate: true, duration: 0.4 });
+            }
+
+            if (state.trackingStatus === 'tracking') {
+                if (state.previousPosition) {
+                    const segDist = haversineMeters(state.previousPosition.lat, state.previousPosition.lng, lat, lng);
+                    if (segDist >= 1.5 && segDist < 500) {
+                        state.totalDistanceMeters += segDist;
+                    }
+                }
+                state.trackPoints.push(current);
+                trackPolyline.addLatLng([lat, lng]);
+
+                if (!state.stationaryAnchor) {
+                    state.stationaryAnchor = { lat, lng, since: now };
+                } else {
+                    const drift = haversineMeters(state.stationaryAnchor.lat, state.stationaryAnchor.lng, lat, lng);
+                    if (drift <= 3.0 && speedMs === 0) {
+                        if (now - state.stationaryAnchor.since >= 12000) {
+                            state.isStationary = true;
+                        }
+                    } else {
+                        state.stationaryAnchor = { lat, lng, since: now };
+                        state.isStationary = false;
+                    }
+                }
+            }
+
+            state.previousPosition = current;
+            checkGeofences(lat, lng);
+            renderTelemetry();
+            broadcastGroupPosition();
+        }
+
+        function renderTelemetry() {
+            const p = state.currentPosition;
+            const dot = document.getElementById('statusIndicatorDot');
+            const statusText = document.getElementById('statusText');
+            const accBadge = document.getElementById('accuracyBadge');
+
+            if (state.demoMode) {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shrink-0';
+                statusText.textContent = state.trackingStatus === 'tracking' ? 'Demo Tracking' : 'Demo Active';
+            } else if (state.trackingStatus === 'tracking') {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0';
+                statusText.textContent = 'Live Tracking';
+            } else if (state.trackingStatus === 'paused') {
+                dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0';
+                statusText.textContent = 'Tracking Paused';
+            } else {
+                dot.className = p ? 'w-2.5 h-2.5 rounded-full bg-sky-500 shrink-0' : 'w-2.5 h-2.5 rounded-full bg-slate-400 shrink-0';
+                statusText.textContent = p ? 'GPS Fix Ready' : 'GPS Idle';
+            }
+
+            accBadge.textContent = p ? `Accuracy: ±${Math.round(p.accuracy)} m` : 'Accuracy: -- m';
+
+            const speedMs = p ? p.speedMs : 0;
+            const speedKmh = (speedMs * 3.6).toFixed(1);
+            document.getElementById('valSpeedKmh').textContent = speedKmh;
+            document.getElementById('valSpeedMs').textContent = `${speedMs.toFixed(2)} m/s`;
+
+            const distKm = state.totalDistanceMeters / 1000;
+            if (distKm >= 1) {
+                document.getElementById('valDistance').textContent = distKm.toFixed(2);
+                document.getElementById('valDistanceUnit').textContent = 'km';
+            } else {
+                document.getElementById('valDistance').textContent = Math.round(state.totalDistanceMeters);
+                document.getElementById('valDistanceUnit').textContent = 'm';
+            }
+            document.getElementById('valPointsCount').textContent = `${state.trackPoints.length} trackpoints`;
+
+            document.getElementById('valLat').textContent = p ? `${p.lat.toFixed(6)}°` : '--.------°';
+            document.getElementById('valLng').textContent = p ? `${p.lng.toFixed(6)}°` : '--.------°';
+            document.getElementById('valAlt').textContent = p && p.altitude !== null ? `${Math.round(p.altitude)} m` : '-- m';
+            document.getElementById('valHeading').textContent = p && p.heading !== null ? `${Math.round(p.heading)}°` : '--°';
+            document.getElementById('valDuration').textContent = formatDuration(state.elapsedMs);
+            document.getElementById('valStationary').textContent = formatShortDuration(state.stationaryMs);
+            document.getElementById('valLastUpdate').textContent = p
+                ? new Date(p.timestamp).toLocaleTimeString([], { hour12: false })
+                : '--:--:--';
+
+            const statBadge = document.getElementById('stationaryBadge');
+            if (state.isStationary) {
+                statBadge.textContent = 'Stationary';
+                statBadge.className = 'px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-500 font-semibold';
+            } else {
+                statBadge.textContent = speedMs > 0 ? 'Moving' : 'Standby';
+                statBadge.className = 'px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 font-semibold';
+            }
+        }
+
+        // ==================== TRACKING SESSION CONTROLS ====================
+        function startGeolocationWatch() {
+            if (!('geolocation' in navigator)) {
+                showToast('Geolocation not supported; switching to Demo Mode.', 'warning');
+                toggleDemoMode(true);
+                return;
+            }
+            if (state.watchId !== null) return;
+
+            state.watchId = navigator.geolocation.watchPosition(
+                (pos) => {
+                    if (state.demoMode) return;
+                    handleNewPosition({
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude,
+                        accuracy: pos.coords.accuracy,
+                        altitude: pos.coords.altitude,
+                        heading: pos.coords.heading,
+                        speedMs: pos.coords.speed,
+                        timestamp: pos.timestamp
+                    }, false);
+                },
+                (err) => {
+                    showToast(`GPS error (${err.message}). Try Demo Mode if indoors.`, 'warning');
+                },
+                { enableHighAccuracy: true, maximumAge: 1500, timeout: 10000 }
+            );
+        }
+
+        function startDurationClock() {
+            stopDurationClock();
+            state.lastTickTime = Date.now();
+            state.durationTimer = setInterval(() => {
+                const now = Date.now();
+                const dt = now - (state.lastTickTime || now);
+                state.lastTickTime = now;
+                if (state.trackingStatus === 'tracking') {
+                    state.elapsedMs += dt;
+                    if (state.isStationary) {
+                        state.stationaryMs += dt;
+                    }
+                    renderTelemetry();
+                }
+            }, 500);
+        }
+
+        function stopDurationClock() {
+            if (state.durationTimer) {
+                clearInterval(state.durationTimer);
+                state.durationTimer = null;
+            }
+        }
+
+        function startTracking() {
+            if (!state.demoMode) startGeolocationWatch();
+            state.trackingStatus = 'tracking';
+            state.autoFollow = true;
+            updateRecenterBtnStyle();
+            startDurationClock();
+
+            document.getElementById('btnStartTrack').disabled = true;
+            document.getElementById('btnPauseTrack').disabled = false;
+            document.getElementById('btnStartLabel').textContent = 'Tracking';
+            renderTelemetry();
+            showToast('Tracking session started', 'success');
+        }
+
+        function pauseTracking() {
+            state.trackingStatus = 'paused';
+            stopDurationClock();
+            document.getElementById('btnStartTrack').disabled = false;
+            document.getElementById('btnPauseTrack').disabled = true;
+            document.getElementById('btnStartLabel').textContent = 'Resume';
+            renderTelemetry();
+            showToast('Tracking paused', 'info');
+        }
+
+        function stopAndClearTracking() {
+            openConfirmModal(
+                'Stop & Save Session?',
+                'This will end the active track, save it to Sessions history, and clear the live path.',
+                () => {
+                    if (state.trackPoints.length > 0) {
+                        const session = {
+                            id: 'ses-' + Date.now(),
+                            date: new Date().toISOString(),
+                            distanceMeters: state.totalDistanceMeters,
+                            durationMs: state.elapsedMs,
+                            points: [...state.trackPoints]
+                        };
+                        state.sessions.unshift(session);
+                        saveSessions();
+                        renderSessions();
+                    }
+
+                    state.trackingStatus = 'idle';
+                    state.elapsedMs = 0;
+                    state.stationaryMs = 0;
+                    state.isStationary = false;
+                    state.stationaryAnchor = null;
+                    state.totalDistanceMeters = 0;
+                    state.trackPoints = [];
+                    state.previousPosition = null;
+                    trackPolyline.setLatLngs([]);
+                    stopDurationClock();
+
+                    document.getElementById('btnStartTrack').disabled = false;
+                    document.getElementById('btnPauseTrack').disabled = true;
+                    document.getElementById('btnStartLabel').textContent = 'Start';
+                    renderTelemetry();
+                    showToast('Session stopped & saved', 'info');
+                }
+            );
+        }
+
+        function toggleDemoMode(forceState = null) {
+            const next = forceState !== null ? forceState : !state.demoMode;
+            state.demoMode = next;
+            const btn = document.getElementById('btnToggleDemo');
+
+            if (next) {
+                btn.classList.add('bg-amber-500', 'text-white');
+                btn.classList.remove('bg-slate-100', 'dark:bg-slate-800', 'text-slate-600', 'dark:text-slate-300');
+                if (state.trackingStatus === 'idle') {
+                    state.trackingStatus = 'tracking';
+                    startDurationClock();
+                    document.getElementById('btnStartTrack').disabled = true;
+                    document.getElementById('btnPauseTrack').disabled = false;
+                    document.getElementById('btnStartLabel').textContent = 'Tracking';
+                }
+                const stepDemo = () => {
+                    if (!state.demoMode || state.trackingStatus !== 'tracking') return;
+                    const wp = DEMO_ROUTE[state.demoIndex % DEMO_ROUTE.length];
+                    state.demoIndex++;
+                    handleNewPosition({
+                        lat: wp.lat,
+                        lng: wp.lng,
+                        accuracy: 9,
+                        altitude: wp.alt,
+                        heading: wp.heading,
+                        speedMs: wp.speedMs,
+                        timestamp: Date.now()
+                    }, true);
+                };
+                stepDemo();
+                state.demoTimer = setInterval(stepDemo, 1600);
+                showToast('Demo movement route active', 'warning');
+            } else {
+                if (state.demoTimer) clearInterval(state.demoTimer);
+                state.demoTimer = null;
+                btn.classList.remove('bg-amber-500', 'text-white');
+                btn.classList.add('bg-slate-100', 'dark:bg-slate-800', 'text-slate-600', 'dark:text-slate-300');
+                renderTelemetry();
+                showToast('Demo mode stopped', 'info');
+            }
+        }
+
+        // ==================== WAYPOINTS & GEOFENCES ====================
+        function openWaypointModal(lat, lng) {
+            state.pendingPinCoords = { lat, lng };
+            document.getElementById('wpModalCoords').textContent = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+            document.getElementById('wpName').value = '';
+            document.getElementById('wpNotes').value = '';
+            document.getElementById('wpRadius').value = 100;
+            document.getElementById('wpRadiusLabel').textContent = '100 m';
+            const modal = document.getElementById('waypointModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeWaypointModal() {
+            state.pendingPinCoords = null;
+            const modal = document.getElementById('waypointModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function saveWaypoints() {
+            localStorage.setItem(STORAGE_KEYS.WAYPOINTS, JSON.stringify(state.waypoints));
+            document.getElementById('wpCountBadge').textContent = state.waypoints.length;
+        }
+
+        function renderWaypoints() {
+            waypointLayerGroup.clearLayers();
+            const list = document.getElementById('waypointsList');
+            document.getElementById('wpCountBadge').textContent = state.waypoints.length;
+
+            if (state.waypoints.length === 0) {
+                list.innerHTML = `<p class="text-xs text-slate-500 dark:text-slate-400 text-center py-8">No waypoints yet. Use <strong>Pin Here</strong> or tap the <strong>Map Pin+</strong> button to drop a geofenced marker.</p>`;
+                return;
+            }
+
+            const pinIcon = L.divIcon({
+                className: '',
+                html: `<div class="waypoint-pin"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></div>`,
+                iconSize: [32, 32],
+                iconAnchor: [16, 32]
+            });
+
+            list.innerHTML = '';
+            state.waypoints.forEach((wp) => {
+                L.marker([wp.lat, wp.lng], { icon: pinIcon })
+                    .bindPopup(`<strong>${wp.name}</strong>${wp.notes ? `<br><span style="font-size:11px">${wp.notes}</span>` : ''}${wp.radius > 0 ? `<br><span style="font-size:11px;color:#d97706">Geofence: ${wp.radius}m</span>` : ''}`)
+                    .addTo(waypointLayerGroup);
+
+                if (wp.radius > 0) {
+                    L.circle([wp.lat, wp.lng], {
+                        radius: wp.radius,
+                        color: '#f59e0b',
+                        weight: 1.5,
+                        fillColor: '#f59e0b',
+                        fillOpacity: 0.12
+                    }).addTo(waypointLayerGroup);
+                }
+
+                const card = document.createElement('div');
+                card.className = 'bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-3 flex items-center justify-between gap-2';
+                card.innerHTML = `
+                    <div class="min-w-0">
+                        <div class="font-semibold text-xs truncate">${wp.name}</div>
+                        <div class="text-[11px] font-mono text-slate-500">${wp.lat.toFixed(5)}, ${wp.lng.toFixed(5)} ${wp.radius > 0 ? `• ${wp.radius}m zone` : ''}</div>
+                        ${wp.notes ? `<div class="text-[11px] text-slate-400 truncate mt-0.5">${wp.notes}</div>` : ''}
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0">
+                        <button type="button" data-focus-wp="${wp.id}" class="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-sky-500 cursor-pointer" title="Focus on Map">
+                            <i data-lucide="locate" class="w-4 h-4"></i>
+                        </button>
+                        <button type="button" data-del-wp="${wp.id}" class="p-1.5 rounded-lg hover:bg-rose-500/15 text-rose-500 cursor-pointer" title="Delete">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                `;
+                list.appendChild(card);
+            });
+            lucide.createIcons();
+        }
+
+        function checkGeofences(lat, lng) {
+            state.waypoints.forEach((wp) => {
+                if (!wp.radius || wp.radius <= 0) return;
+                const d = haversineMeters(lat, lng, wp.lat, wp.lng);
+                const inside = d <= wp.radius;
+                if (inside && !wp._wasInside) {
+                    wp._wasInside = true;
+                    showToast(`Entered geofence: ${wp.name} (${Math.round(d)}m)`, 'warning');
+                } else if (!inside && wp._wasInside) {
+                    wp._wasInside = false;
+                    showToast(`Exited geofence: ${wp.name}`, 'info');
+                }
+            });
+        }
+
+        // ==================== GROUP SYNC (BROADCASTCHANNEL + LOCALSTORAGE) ====================
+        const groupChannel = ('BroadcastChannel' in window) ? new BroadcastChannel('glorix_room_sync') : null;
+
+        function getPeerColor(id) {
+            let hash = 0;
+            for (let i = 0; i < id.length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
+            return PEER_COLORS[Math.abs(hash) % PEER_COLORS.length];
+        }
+
+        function broadcastGroupPosition() {
+            if (!state.group.sharing || !state.currentPosition) return;
+            const payload = {
+                type: 'peer-update',
+                roomCode: state.group.roomCode,
+                peerId: state.group.peerId,
+                peerName: state.group.peerName,
+                lat: state.currentPosition.lat,
+                lng: state.currentPosition.lng,
+                speedKmh: (state.currentPosition.speedMs * 3.6).toFixed(1),
+                isStationary: state.isStationary,
+                updatedAt: Date.now()
+            };
+            if (groupChannel) groupChannel.postMessage(payload);
+            localStorage.setItem(`${STORAGE_KEYS.GROUP_PEERS}_${state.group.roomCode}_${state.group.peerId}`, JSON.stringify(payload));
+        }
+
+        function handleIncomingPeerMessage(msg) {
+            if (!msg || msg.roomCode !== state.group.roomCode || msg.peerId === state.group.peerId) return;
+            state.group.peers[msg.peerId] = msg;
+            renderGroupPeers();
+        }
+
+        if (groupChannel) {
+            groupChannel.onmessage = (ev) => handleIncomingPeerMessage(ev.data);
+        }
+
+        window.addEventListener('storage', (ev) => {
+            if (!ev.key || !ev.newValue) return;
+            if (ev.key.startsWith(`${STORAGE_KEYS.GROUP_PEERS}_${state.group.roomCode}_`)) {
+                try {
+                    handleIncomingPeerMessage(JSON.parse(ev.newValue));
+                } catch (_) {}
+            }
+        });
+
+        function renderGroupPeers() {
+            peerLayerGroup.clearLayers();
+            const now = Date.now();
+            const activePeers = Object.values(state.group.peers).filter((p) => now - p.updatedAt < 45000);
+            document.getElementById('groupCountBadge').textContent = activePeers.length;
+
+            const container = document.getElementById('groupMembersList');
+            if (activePeers.length === 0) {
+                container.innerHTML = `<p class="text-xs text-slate-500 dark:text-slate-400 text-center py-6">No other active members in room <strong>${state.group.roomCode}</strong> yet.</p>`;
+                return;
+            }
+
+            container.innerHTML = '';
+            activePeers.forEach((p) => {
+                const color = getPeerColor(p.peerId);
+                const initials = (p.peerName || 'P').slice(0, 2).toUpperCase();
+                const icon = L.divIcon({
+                    className: '',
+                    html: `
+                        <div class="peer-marker-wrapper">
+                            <div class="peer-name-badge" style="background:${color}">${p.peerName}</div>
+                            <div class="peer-pulse-ring" style="background:${color}"></div>
+                            <div class="peer-core-dot" style="background:${color}">${initials}</div>
+                            ${p.isStationary ? `<div class="peer-stopped-pill">STOPPED</div>` : ''}
+                        </div>
+                    `,
+                    iconSize: [40, 40],
+                    iconAnchor: [20, 20]
+                });
+                L.marker([p.lat, p.lng], { icon })
+                    .bindPopup(`<strong>${p.peerName}</strong><br>${p.speedKmh} km/h`)
+                    .addTo(peerLayerGroup);
+
+                const item = document.createElement('div');
+                item.className = 'bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-3 flex items-center justify-between';
+                item.innerHTML = `
+                    <div class="flex items-center gap-2.5">
+                        <span class="w-3 h-3 rounded-full" style="background:${color}"></span>
+                        <div>
+                            <div class="text-xs font-bold">${p.peerName}</div>
+                            <div class="text-[11px] font-mono text-slate-500">${p.speedKmh} km/h • ${p.isStationary ? 'Stationary' : 'Moving'}</div>
+                        </div>
+                    </div>
+                    <button type="button" data-pan-peer="${p.lat},${p.lng}" class="text-xs font-semibold text-sky-500 hover:underline cursor-pointer">Locate</button>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        // ==================== SAVED SESSIONS & EXPORTS ====================
+        function saveSessions() {
+            localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(state.sessions.slice(0, 25)));
+            document.getElementById('sessionCountBadge').textContent = state.sessions.length;
+        }
+
+        function renderSessions() {
+            const list = document.getElementById('sessionsList');
+            document.getElementById('sessionCountBadge').textContent = state.sessions.length;
+            if (state.sessions.length === 0) {
+                list.innerHTML = `<p class="text-xs text-slate-500 dark:text-slate-400 text-center py-8">Completed tracking sessions will appear here automatically when you stop a track.</p>`;
+                return;
+            }
+            list.innerHTML = '';
+            state.sessions.forEach((s) => {
+                const distKm = (s.distanceMeters / 1000).toFixed(2);
+                const card = document.createElement('div');
+                card.className = 'bg-slate-100/80 dark:bg-slate-850/90 border border-slate-200/60 dark:border-slate-800 rounded-2xl p-3 flex items-center justify-between gap-2';
+                card.innerHTML = `
+                    <div>
+                        <div class="text-xs font-bold">${new Date(s.date).toLocaleString()}</div>
+                        <div class="text-[11px] font-mono text-slate-500">${distKm} km • ${formatDuration(s.durationMs)} • ${s.points.length} pts</div>
+                    </div>
+                    <button type="button" data-load-session="${s.id}" class="px-2.5 py-1.5 rounded-xl bg-sky-500/15 text-sky-500 text-xs font-semibold hover:bg-sky-500 hover:text-white transition cursor-pointer">Plot</button>
+                `;
+                list.appendChild(card);
+            });
+        }
+
+        function downloadFile(filename, content, mimeType) {
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function exportGPX() {
+            if (!state.trackPoints.length) return showToast('No trackpoints to export yet', 'warning');
+            const trkpts = state.trackPoints.map((pt) =>
+                `      <trkpt lat="${pt.lat}" lon="${pt.lng}">${pt.altitude !== null ? `<ele>${pt.altitude}</ele>` : ''}<time>${new Date(pt.timestamp).toISOString()}</time></trkpt>`
+            ).join('\n');
+            const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="GLORIX AI">\n  <trk><name>GLORIX AI Track</name><trkseg>\n${trkpts}\n  </trkseg></trk>\n</gpx>`;
+            downloadFile(`glorix-ai-track-${Date.now()}.gpx`, gpx, 'application/gpx+xml');
+        }
+
+        function exportCSV() {
+            if (!state.trackPoints.length) return showToast('No trackpoints to export yet', 'warning');
+            const rows = ['timestamp,lat,lng,speed_ms,altitude_m,heading_deg'];
+            state.trackPoints.forEach((pt) => {
+                rows.push(`${new Date(pt.timestamp).toISOString()},${pt.lat},${pt.lng},${pt.speedMs.toFixed(2)},${pt.altitude ?? ''},${pt.heading ?? ''}`);
+            });
+            downloadFile(`glorix-ai-track-${Date.now()}.csv`, rows.join('\n'), 'text/csv');
+        }
+
+        function exportGeoJSON() {
+            if (!state.trackPoints.length) return showToast('No trackpoints to export yet', 'warning');
+            const fc = {
+                type: 'FeatureCollection',
+                features: [{
+                    type: 'Feature',
+                    properties: { app: 'GLORIX AI', distanceMeters: Math.round(state.totalDistanceMeters), durationMs: state.elapsedMs },
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: state.trackPoints.map((pt) => [pt.lng, pt.lat])
+                    }
+                }]
+            };
+            downloadFile(`glorix-ai-track-${Date.now()}.geojson`, JSON.stringify(fc, null, 2), 'application/geo+json');
+        }
+
+        // ==================== UI WIRING & INITIALIZATION ====================
+        function updateRecenterBtnStyle() {
+            const btn = document.getElementById('btnRecenter');
+            if (state.autoFollow) {
+                btn.className = 'p-2.5 rounded-2xl bg-sky-500 text-white shadow-lg shadow-sky-500/25 hover:bg-sky-600 transition cursor-pointer';
+            } else {
+                btn.className = 'p-2.5 rounded-2xl bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 text-slate-700 dark:text-slate-200 shadow-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer';
+            }
+        }
+
+        function init() {
+            const savedTheme = localStorage.getItem(STORAGE_KEYS.THEME);
+            if (savedTheme === 'light') document.documentElement.classList.remove('dark');
+
+            document.getElementById('btnThemeToggle').addEventListener('click', () => {
+                const isDark = document.documentElement.classList.toggle('dark');
+                localStorage.setItem(STORAGE_KEYS.THEME, isDark ? 'dark' : 'light');
+            });
+
+            const permModal = document.getElementById('permissionModal');
+            document.getElementById('btnGrantLocation').addEventListener('click', () => {
+                permModal.classList.add('hidden');
+                startGeolocationWatch();
+                startTracking();
+            });
+            document.getElementById('btnStartDemoFromModal').addEventListener('click', () => {
+                permModal.classList.add('hidden');
+                toggleDemoMode(true);
+            });
+
+            const layerDropdown = document.getElementById('layerDropdown');
+            document.getElementById('btnLayerMenu').addEventListener('click', () => {
+                layerDropdown.classList.toggle('hidden');
+            });
+            document.querySelectorAll('.layer-option').forEach((el) => {
+                el.addEventListener('click', () => {
+                    switchMapLayer(el.dataset.layer);
+                    layerDropdown.classList.add('hidden');
+                });
+            });
+
+            document.getElementById('btnRecenter').addEventListener('click', () => {
+                state.autoFollow = true;
+                updateRecenterBtnStyle();
+                if (state.currentPosition) {
+                    map.setView([state.currentPosition.lat, state.currentPosition.lng], Math.max(map.getZoom(), 15), { animate: true });
+                }
+            });
+            document.getElementById('btnToggleDemo').addEventListener('click', () => toggleDemoMode());
+
+            document.getElementById('btnStartTrack').addEventListener('click', startTracking);
+            document.getElementById('btnPauseTrack').addEventListener('click', pauseTracking);
+            document.getElementById('btnStopClear').addEventListener('click', stopAndClearTracking);
+
+            document.querySelectorAll('.tab-btn').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.tab-btn').forEach((b) => {
+                        b.classList.remove('border-sky-500', 'text-sky-500');
+                        b.classList.add('border-transparent', 'text-slate-500', 'dark:text-slate-400');
+                    });
+                    btn.classList.add('border-sky-500', 'text-sky-500');
+                    btn.classList.remove('border-transparent', 'text-slate-500', 'dark:text-slate-400');
+
+                    document.querySelectorAll('.tab-content').forEach((c) => c.classList.add('hidden'));
+                    document.getElementById(`tab-${btn.dataset.tab}`).classList.remove('hidden');
+                });
+            });
+
+            document.getElementById('drawerHandle').addEventListener('click', () => {
+                const drawer = document.getElementById('dashboardDrawer');
+                drawer.classList.toggle('h-[46vh]');
+                drawer.classList.toggle('h-[78vh]');
+            });
+
+            document.getElementById('btnCopyCoords').addEventListener('click', () => {
+                if (!state.currentPosition) return showToast('No coordinates available yet', 'warning');
+                const txt = `${state.currentPosition.lat.toFixed(6)}, ${state.currentPosition.lng.toFixed(6)}`;
+                navigator.clipboard?.writeText(txt);
+                showToast(`Copied ${txt}`, 'success');
+            });
+
+            document.getElementById('btnExportGPX').addEventListener('click', exportGPX);
+            document.getElementById('btnExportCSV').addEventListener('click', exportCSV);
+            document.getElementById('btnExportGeoJSON').addEventListener('click', exportGeoJSON);
+
+            document.getElementById('btnDropWpHere').addEventListener('click', () => {
+                const target = state.currentPosition || map.getCenter();
+                openWaypointModal(target.lat, target.lng);
+            });
+            document.getElementById('btnDropWpMap').addEventListener('click', () => {
+                state.pinDropMode = true;
+                document.getElementById('pinDropBanner').classList.remove('hidden');
+            });
+            document.getElementById('btnCancelPinDrop').addEventListener('click', () => {
+                state.pinDropMode = false;
+                document.getElementById('pinDropBanner').classList.add('hidden');
+            });
+            document.getElementById('btnCloseWpModal').addEventListener('click', closeWaypointModal);
+            document.getElementById('btnCancelWp').addEventListener('click', closeWaypointModal);
+            document.getElementById('wpRadius').addEventListener('input', (e) => {
+                document.getElementById('wpRadiusLabel').textContent = `${e.target.value} m`;
+            });
+            document.getElementById('waypointForm').addEventListener('submit', (e) => {
+                e.preventDefault();
+                if (!state.pendingPinCoords) return;
+                const name = document.getElementById('wpName').value.trim() || 'Waypoint';
+                const notes = document.getElementById('wpNotes').value.trim();
+                const radius = Number(document.getElementById('wpRadius').value) || 0;
+                state.waypoints.push({
+                    id: 'wp-' + Date.now(),
+                    name,
+                    notes,
+                    radius,
+                    lat: state.pendingPinCoords.lat,
+                    lng: state.pendingPinCoords.lng
+                });
+                saveWaypoints();
+                renderWaypoints();
+                closeWaypointModal();
+                showToast(`Saved waypoint "${name}"`, 'success');
+            });
+
+            document.getElementById('waypointsList').addEventListener('click', (e) => {
+                const focusBtn = e.target.closest('[data-focus-wp]');
+                if (focusBtn) {
+                    const wp = state.waypoints.find((x) => x.id === focusBtn.dataset.focusWp);
+                    if (wp) map.setView([wp.lat, wp.lng], 16, { animate: true });
+                    return;
+                }
+                const delBtn = e.target.closest('[data-del-wp]');
+                if (delBtn) {
+                    state.waypoints = state.waypoints.filter((x) => x.id !== delBtn.dataset.delWp);
+                    saveWaypoints();
+                    renderWaypoints();
+                    showToast('Waypoint removed', 'info');
+                }
+            });
+
+            document.getElementById('inputPeerName').value = state.group.peerName;
+            document.getElementById('inputRoomCode').value = state.group.roomCode;
+            document.getElementById('inputPeerName').addEventListener('change', (e) => {
+                state.group.peerName = e.target.value.trim() || state.group.peerName;
+                broadcastGroupPosition();
+            });
+            document.getElementById('btnJoinRoom').addEventListener('click', () => {
+                const code = document.getElementById('inputRoomCode').value.trim().toUpperCase();
+                if (!code) return;
+                state.group.roomCode = code;
+                state.group.peers = {};
+                renderGroupPeers();
+                broadcastGroupPosition();
+                showToast(`Joined room ${code}`, 'success');
+            });
+            document.getElementById('toggleShareLocation').addEventListener('change', (e) => {
+                state.group.sharing = e.target.checked;
+                document.getElementById('roomStatusPill').textContent = state.group.sharing ? `Broadcasting in ${state.group.roomCode}` : 'Sharing OFF';
+                if (state.group.sharing) {
+                    if (!state.currentPosition && !state.demoMode) startGeolocationWatch();
+                    broadcastGroupPosition();
+                    showToast('Live group sharing enabled', 'success');
+                } else {
+                    showToast('Live group sharing paused', 'info');
+                }
+            });
+            document.getElementById('btnCopyRoomLink').addEventListener('click', () => {
+                const url = new URL(window.location.href);
+                url.searchParams.set('room', state.group.roomCode);
+                navigator.clipboard?.writeText(url.toString());
+                showToast('Room invite link copied', 'success');
+            });
+            document.getElementById('groupMembersList').addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-pan-peer]');
+                if (!btn) return;
+                const [lat, lng] = btn.dataset.panPeer.split(',').map(Number);
+                map.setView([lat, lng], 16, { animate: true });
+            });
+
+            document.getElementById('sessionsList').addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-load-session]');
+                if (!btn) return;
+                const ses = state.sessions.find((x) => x.id === btn.dataset.loadSession);
+                if (!ses || !ses.points.length) return;
+                const latLngs = ses.points.map((p) => [p.lat, p.lng]);
+                trackPolyline.setLatLngs(latLngs);
+                map.fitBounds(trackPolyline.getBounds(), { padding: [40, 40] });
+                showToast('Plotted saved session route', 'info');
+            });
+
+            document.getElementById('btnConfirmCancel').addEventListener('click', closeConfirmModal);
+            document.getElementById('btnConfirmAccept').addEventListener('click', () => {
+                const cb = state.confirmCallback;
+                closeConfirmModal();
+                if (cb) cb();
+            });
+
+            try {
+                const savedWp = JSON.parse(localStorage.getItem(STORAGE_KEYS.WAYPOINTS) || '[]');
+                if (Array.isArray(savedWp)) state.waypoints = savedWp;
+                const savedSes = JSON.parse(localStorage.getItem(STORAGE_KEYS.SESSIONS) || '[]');
+                if (Array.isArray(savedSes)) state.sessions = savedSes;
+            } catch (_) {}
+
+            renderWaypoints();
+            renderSessions();
+            renderGroupPeers();
+            renderTelemetry();
+            lucide.createIcons();
+        }
+
+        window.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
